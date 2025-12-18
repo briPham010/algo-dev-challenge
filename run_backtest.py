@@ -78,7 +78,7 @@ def create_instrument_from_config(config: Dict[str, Any]) -> tuple[InstrumentId,
     return instrument_id, instrument
 
 
-def load_parquet_to_bars(data_path: Path, instrument_id: InstrumentId, start_time: str = None, end_time: str = None) -> list[Bar]:
+def load_parquet_to_bars(data_path: Path, instrument_id: InstrumentId, start_time: str = "2022-01-01", end_time: str = "2022-02-01") -> list[Bar]:
     """
     Load OHLCV data from Parquet file and convert to Nautilus Bar objects.
     

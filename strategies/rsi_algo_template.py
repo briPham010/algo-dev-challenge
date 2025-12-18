@@ -39,7 +39,7 @@ from nautilus_trader.core.message import Event
 # 
 # OPTION 2: Use custom pandas-based indicators (ALTERNATIVE)
 # Uncomment the following line if you prefer custom implementations:
-# from .indicators import rsi, ema, atr
+from .indicators import rsi, ema, atr, macd
 # 
 # See indicators.py for more information about both approaches.
 # ====================================================================
@@ -91,9 +91,15 @@ class RsiAlgoStrategy(Strategy):
         self.base_qty = config.base_qty
         self.enable_pyramid = config.enable_pyramid
         self.max_position = config.max_position
+        self.macd_current = 0
+        self.macd_position = 0
+        self.current_atr = 0
+        self.signal_current = 0
         
         # State variables
         # TODO: Add any additional state variables you need
+        self.highs: list[float] = []   # <--- ADD THIS
+        self.lows: list[float] = []    # <--- ADD THIS
         self.position: Optional = None
         self.prices: list[float] = []  # Store recent prices for indicator calculation (needed for custom indicators)
         self.bars: list[Bar] = []      # Store recent bars
@@ -181,6 +187,21 @@ class RsiAlgoStrategy(Strategy):
             # Fallback: try direct conversion
             close_price = float(bar.close)
         self.prices.append(close_price)
+
+        try:
+            h = float(bar.high.as_double()) if hasattr(bar.high, 'as_double') else float(bar.high)
+            l = float(bar.low.as_double()) if hasattr(bar.low, 'as_double') else float(bar.low)
+        except:
+            h, l = float(bar.high), float(bar.low)
+            
+        self.highs.append(h)
+        self.lows.append(l)
+        
+        # Keep lists same size
+        max_bars = max(self.rsi_period * 3, 100)
+        if len(self.prices) > max_bars:
+            self.highs = self.highs[-max_bars:]
+            self.lows = self.lows[-max_bars:]
         
         # Keep only recent bars for indicator calculation (e.g., last 100 bars)
         # This prevents memory issues with very long backtests
@@ -188,6 +209,13 @@ class RsiAlgoStrategy(Strategy):
         if len(self.bars) > max_bars:
             self.bars = self.bars[-max_bars:]
             self.prices = self.prices[-max_bars:]
+
+        max_len = 100
+        if len(self.prices) > max_len:
+            self.prices = self.prices[-max_len:]
+            self.highs = self.highs[-max_len:]
+            self.lows = self.lows[-max_len:]
+            self.volumes = self.volumes[-max_len:]
         
         # Update position reference (find open position for this instrument)
         self.position = None
@@ -198,6 +226,7 @@ class RsiAlgoStrategy(Strategy):
                 if pos.instrument_id == self.instrument_id:
                     self.position = pos
                     break
+
         
         # ====================================================================
         # === TODO 1: Compute indicators ===
@@ -215,18 +244,18 @@ class RsiAlgoStrategy(Strategy):
         # with Nautilus Trader's bar handling system.
         # 
         # Example implementation:
-        #   # Update RSI indicator with the new bar
-        #   self.rsi_indicator.handle_bar(bar)
-        #   
+          # Update RSI indicator with the new bar
+        # self.rsi_indicator.handle_bar(bar)
+          
         #   # Check if indicator is ready (has enough data)
-        #   if self.rsi_indicator.initialized:
+        # if self.rsi_indicator.initialized:
         #       # Get current RSI value
-        #       self.current_rsi = self.rsi_indicator.value
-        #       
+        #     self.current_rsi = self.rsi_indicator.value
+              
         #       # Store previous value for crossover detection
-        #       if hasattr(self, '_prev_rsi'):
-        #           self.previous_rsi = self._prev_rsi
-        #       self._prev_rsi = self.current_rsi
+        #     if hasattr(self, '_prev_rsi'):
+        #         self.previous_rsi = self._prev_rsi
+        #     self._prev_rsi = self.current_rsi
         # 
         # Available built-in indicators:
         #   - RelativeStrengthIndex (from nautilus_trader.indicators.momentum)
@@ -242,11 +271,11 @@ class RsiAlgoStrategy(Strategy):
         # custom logic or prefer pandas-based calculations.
         # 
         # Example implementation:
-        #   if len(self.prices) >= self.rsi_period:
-        #       prices_series = pd.Series(self.prices)
-        #       rsi_values = rsi(prices_series, period=self.rsi_period)
-        #       self.current_rsi = rsi_values.iloc[-1]  # Most recent RSI value
-        #       self.previous_rsi = rsi_values.iloc[-2] if len(rsi_values) > 1 else None
+        # if len(self.prices) >= self.rsi_period:
+        #     prices_series = pd.Series(self.prices)
+        #     rsi_values = rsi(prices_series, period=self.rsi_period)
+        #     self.current_rsi = rsi_values.iloc[-1]  # Most recent RSI value
+        #     self.previous_rsi = rsi_values.iloc[-2] if len(rsi_values) > 1 else None
         # 
         # See indicators.py for available custom indicator functions.
         # 
@@ -254,7 +283,41 @@ class RsiAlgoStrategy(Strategy):
         
         # TODO: Implement indicator calculation here
         # Choose either Option 1 (built-in) or Option 2 (custom)
-        # ...
+        if len(self.prices) < self.rsi_period + 2:
+            return
+
+        # 2. Convert Lists to Pandas Series
+        # (Pandas is slower than lists, but gives us powerful math functions)
+        s_close = pd.Series(self.prices)
+        s_high = pd.Series(self.highs)
+        s_low = pd.Series(self.lows)
+
+        # 3. Calculate RSI
+        # Call the rsi function from your indicators.py
+        rsi_series = rsi(s_close, period=self.rsi_period)
+        
+        # Store current and previous values safely
+        if not rsi_series.empty:
+            self.current_rsi = rsi_series.iloc[-1]
+            # Check if we have at least 2 values before accessing [-2]
+            if len(rsi_series) > 1:
+                self.previous_rsi = rsi_series.iloc[-2]
+
+        # 4. Calculate MACD (Required for the Entry Gate)
+        # Assuming your indicators.py has a macd function (standard in these templates)
+        # Returns tuple: (macd_line, signal_line, histogram)
+        macd_line, signal_line, _ = macd(s_close, fast_period=12, slow_period=26, signal_period=9)
+        
+        # Store for use in Entry Logic
+        self.macd_current = macd_line.iloc[-1]
+        self.signal_current = signal_line.iloc[-1]
+
+        # 5. Calculate ATR (Required for Pyramiding Steps)
+        atr_series = atr(s_high, s_low, s_close, period=14)
+        self.current_atr = atr_series.iloc[-1]
+
+        # Debug logging (Optional: remove later)
+        # self._log.info(f"RSI: {self.current_rsi:.2f} | MACD: {self.macd_current:.2f}")        
         
         # If indicators aren't ready yet, skip trading logic
         if self.current_rsi is None:
@@ -288,7 +351,21 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
         
         # TODO: Implement long entry logic here
-        # ...
+
+        is_macd_safe = self.macd_current <= self.signal_current
+        
+        # Trigger: RSI is below entry level
+        is_oversold = self.current_rsi < self.long_entry
+        # 
+        if is_macd_safe and is_oversold:
+            if not self.is_long and self.current_rsi < self.long_entry:
+                # Check for crossover (RSI was above threshold, now below)
+                if self.previous_rsi is not None and self.previous_rsi >= self.long_entry:
+                    self.enter_long(qty=self.base_qty)
+
+
+
+
         
         # ====================================================================
         # === TODO 3: Implement pyramid logic ===
@@ -318,7 +395,9 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
         
         # TODO: Implement pyramid logic here
-        # ...
+        if (self.is_long and self.enable_pyramid and self.current_rsi < self.long_entry and self.position.quantity < self.max_position):
+              # Add to position
+            self.enter_long(qty=self.base_qty)
         
         # ====================================================================
         # === TODO 4: Implement exit logic ===
@@ -345,7 +424,10 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
         
         # TODO: Implement exit logic here
-        # ...
+        if self.is_long and self.current_rsi > self.long_exit:
+              # Check for crossover (RSI was below threshold, now above)
+            if self.previous_rsi is not None and self.previous_rsi <= self.long_exit:
+                self.exit_long()
         
         # ====================================================================
         # === OPTIONAL BONUS: Implement RSI divergence logic ===

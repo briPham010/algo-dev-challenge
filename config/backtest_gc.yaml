@@ -58,7 +58,7 @@ data:
     path: "./data/gc_1m.parquet"
     bar_type: "1-MINUTE-LAST-EXTERNAL"
     start_time: "2022-01-01T00:00:00Z"
-    end_time: "2022-12-31T23:59:59Z"
+    end_time: "2022-02-01T23:59:59Z"
     
   # Required columns in Parquet file
   # timestamp: datetime64[ns]
