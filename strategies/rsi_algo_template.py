@@ -33,13 +33,16 @@ from nautilus_trader.core.message import Event
 #
 # OPTION 1: Use Nautilus Trader's built-in indicators (RECOMMENDED)
 # Uncomment the following lines:
-# from nautilus_trader.indicators.momentum import RelativeStrengthIndex
-# from nautilus_trader.indicators.trend import ExponentialMovingAverage
-# from nautilus_trader.indicators.volatility import AverageTrueRange
+from nautilus_trader.indicators.momentum import RelativeStrengthIndex
+from nautilus_trader.indicators.volatility import AverageTrueRange
+from nautilus_trader.indicators import ExponentialMovingAverage
+from nautilus_trader.indicators import MovingAverageConvergenceDivergence
+from nautilus_trader.model.enums import PriceType
+
 #
 # OPTION 2: Use custom pandas-based indicators (ALTERNATIVE)
 # Uncomment the following line if you prefer custom implementations:
-from .indicators import rsi, ema, atr, macd
+# from .indicators import rsi, ema, atr, macd
 
 #
 # See indicators.py for more information about both approaches.
@@ -115,8 +118,22 @@ class RsiAlgoStrategy(Strategy):
         self.last_entry_rsi_level = 0.0
 
         # Indicator values (updated on each bar)
+        self.rsi_indicator = RelativeStrengthIndex(period=self.rsi_period)
+        self.rsi_indicator = RelativeStrengthIndex(period=14)
+        self.atr_indicator = AverageTrueRange(period=14)
+        self.macd_indicator = MovingAverageConvergenceDivergence(fast_period=12, slow_period=26, price_type=PriceType.LAST)
+        self.signal_indicator = ExponentialMovingAverage(period=9)
+
         self.current_rsi: Optional[float] = None
         self.previous_rsi: Optional[float] = None
+        self.current_atr = None
+        self.macd_current = None
+        self.signal_current = None
+
+
+        self.vol_short_indicator = ExponentialMovingAverage(period=46)
+        self.vol_long_indicator = ExponentialMovingAverage(period=92)
+        self.is_volume_decreasing = False
 
         # RSI Divergence Variables Here
 
@@ -134,7 +151,6 @@ class RsiAlgoStrategy(Strategy):
         # Volumes
 
         self.volumes: list[float] = []
-
 
         # ====================================================================
         # Initialize Indicators - Choose ONE approach:
@@ -209,6 +225,7 @@ class RsiAlgoStrategy(Strategy):
         # Update bar history
         self.bar_index += 1
         self.bars.append(bar)
+
         # Extract close price (handle both Price object and direct float)
         try:
             close_price = (
@@ -272,7 +289,7 @@ class RsiAlgoStrategy(Strategy):
             v = float(bar.volume.as_double())
         except:
             v = float(bar.volume)
-            
+
         self.volumes.append(v)
 
         # ====================================================================
@@ -294,13 +311,13 @@ class RsiAlgoStrategy(Strategy):
         # Update RSI indicator with the new bar
         # self.rsi_indicator.handle_bar(bar)
 
-        #   # Check if indicator is ready (has enough data)
+        # # Check if indicator is ready (has enough data)
         # if self.rsi_indicator.initialized:
-        #       # Get current RSI value
+        #     # Get current RSI value
         #     self.current_rsi = self.rsi_indicator.value
 
-        #       # Store previous value for crossover detection
-        #     if hasattr(self, '_prev_rsi'):
+        #     # Store previous value for crossover detection
+        #     if hasattr(self, "_prev_rsi"):
         #         self.previous_rsi = self._prev_rsi
         #     self._prev_rsi = self.current_rsi
         #
@@ -329,54 +346,86 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
 
         # TODO: Implement indicator calculation here
+
         # Choose either Option 1 (built-in) or Option 2 (custom)
-        if len(self.prices) < self.rsi_period + 2:
-            return
+        # if len(self.prices) < self.rsi_period + 2:
+        #     return
 
-        # Convert Lists to Pandas Series
-        s_close = pd.Series(self.prices)
-        s_high = pd.Series(self.highs)
-        s_low = pd.Series(self.lows)
-        s_volume = pd.Series(self.volumes)
+        # # Convert Lists to Pandas Series
+        # s_close = pd.Series(self.prices)
+        # s_high = pd.Series(self.highs)
+        # s_low = pd.Series(self.lows)
+        # s_volume = pd.Series(self.volumes)
 
-        # Calculate RSI
-        rsi_series = rsi(s_close, period=self.rsi_period)
+        # # Calculate RSI
+        # rsi_series = rsi(s_close, period=self.rsi_period)
 
-        # Store current and previous values safely
-        if not rsi_series.empty:
-            self.current_rsi = rsi_series.iloc[-1]
-            # Check if we have at least 2 values before accessing [-2]
-            if len(rsi_series) > 1:
-                self.previous_rsi = rsi_series.iloc[-2]
+        # # Store current and previous values safely
+        # if not rsi_series.empty:
+        #     self.current_rsi = rsi_series.iloc[-1]
+        #     # Check if we have at least 2 values before accessing [-2]
+        #     if len(rsi_series) > 1:
+        #         self.previous_rsi = rsi_series.iloc[-2]
 
-        # Calculate MACD
-        macd_line, signal_line, _ = macd(
-            s_close, fast_period=12, slow_period=26, signal_period=9
-        )
+        # # Calculate MACD
+        # macd_line, signal_line, _ = macd(
+        #     s_close, fast_period=12, slow_period=26, signal_period=9
+        # )
 
-        # Store for use in Entry Logic
-        self.macd_current = macd_line.iloc[-1]
-        self.signal_current = signal_line.iloc[-1]
+        # # Store for use in Entry Logic
+        # self.macd_current = macd_line.iloc[-1]
+        # self.signal_current = signal_line.iloc[-1]
 
-        # 5. Calculate ATR
-        atr_series = atr(s_high, s_low, s_close, period=14)
-        self.current_atr = atr_series.iloc[-1]
+        # # Calculate ATR
+        # atr_series = atr(s_high, s_low, s_close, period=14)
+        # self.current_atr = atr_series.iloc[-1]
 
-        # Debug logging (Optional: remove later)
-        # self._log.info(f"RSI: {self.current_rsi:.2f} | MACD: {self.macd_current:.2f}")
+        # # Debug logging (Optional: remove later)
+        # # self._log.info(f"RSI: {self.current_rsi:.2f} | MACD: {self.macd_current:.2f}")
+
+        self.atr_indicator.handle_bar(bar)
+        self.macd_indicator.handle_bar(bar)
+
+        if self.macd_indicator.initialized:
+            raw_macd_value = self.macd_indicator.value
+            self.signal_indicator.update_raw(raw_macd_value)
+
+
+        # Check if indicators are ready
+        self.rsi_indicator.handle_bar(bar)
+        if self.rsi_indicator.initialized:
+            self.current_rsi = self.rsi_indicator.value * 100
+
+        # Store previous value for crossover detection
+        if hasattr(self, "_prev_rsi"):
+            self.previous_rsi = self._prev_rsi
+        self._prev_rsi = self.current_rsi
+
+        self.current_atr = self.atr_indicator.value
+        self.macd_current = self.macd_indicator.value
+        self.signal_current = self.signal_indicator.value
 
         # RSI Divergence Indicators
-
         # Calculate short-term volume average
-        vol_short = ema(s_volume, period=46).iloc[-1]
-        vol_long = ema(s_volume, period=92).iloc[-1]
-        self.is_volume_decreasing = vol_short < vol_long
 
-        self.osc = rsi(s_close, self.len)
+        # self.vol_short_indicator.update_raw(v)
+        # self.vol_long_indicator.update_raw(v)
+        # vol_short = self.vol_short_indicator.value
+        # vol_long = self.vol_long_indicator.value
+        # self.is_volume_decreasing = vol_short < vol_long
 
+        # vol_short = ema(s_volume, period=46).iloc[-1]
+        # vol_long = ema(s_volume, period=92).iloc[-1]
+        # self.is_volume_decreasing = vol_short < vol_long
 
+        # self.osc = rsi(s_close, self.len)
 
-
+        if self.bar_index % 10 == 0:
+            self._log.info(
+                f"BAR: {self.bar_index} | "
+                f"MACD: {self.macd_current:.5f} | "
+                f"SIGNAL: {self.signal_current:.5f} | "
+                f"Safe?: {self.macd_current <= self.signal_current}")
 
         # If indicators aren't ready yet, skip trading logic
         if self.current_rsi is None:
@@ -417,7 +466,7 @@ class RsiAlgoStrategy(Strategy):
         is_oversold = self.current_rsi < self.long_entry
         #
         if is_macd_safe and is_oversold:
-            if not self.is_long and self.current_rsi < self.long_entry:
+            if not self.is_long and is_oversold and is_macd_safe:
                 # Check for crossover (RSI was above threshold, now below)
                 if (
                     self.previous_rsi is not None
@@ -463,7 +512,7 @@ class RsiAlgoStrategy(Strategy):
             and self.current_rsi < self.long_entry
             and self.position.quantity < self.max_position
         ):
-            
+
             sensitivity = [0.3, 0.3, 0.3, 0.4]
 
             longPyramidStep1 = self.current_atr * sensitivity[0]
@@ -560,51 +609,31 @@ class RsiAlgoStrategy(Strategy):
 
         # TODO (OPTIONAL): Implement RSI divergence detection here
 
-        self.bull_divergence = False
-        self.bear_divergence = False
+        # self.bull_divergence = False
+        # self.bear_divergence = False
 
-        # Checking for bullish divergence
+        # # Checking for bullish divergence
 
-        # Check for 11 bars of history before attempting pivot checks
-        if len(self.lows) > 12:
-            # pass
+        # # Check for 11 bars of history before attempting pivot checks
+        # if len(self.lows) > 12:
+        #     pass
 
-            # Now we figure out how to find a pivot low
+        #     # Now we figure out how to find a pivot low
 
-            pivot_search = -1 - self.lbR
+        #     pivot_search = -1 - self.lbR
 
-            pivot_search_low = self.lows[pivot_search]
-            pivot_search_high = self.highs[pivot_search]
-            pivot_rsi = rsi_series.iloc[pivot_search]
+        #     pivot_search_low = self.lows[pivot_search]
+        #     pivot_search_high = self.highs[pivot_search]
+        #     pivot_rsi = rsi_series.iloc[pivot_search]
 
-            # awooga
-            current_window_low = self.lows[pivot_search:]
-            is_pivot_low = (pivot_search_low == min(current_window_low))
+        #     # awooga
+        #     current_window_low = self.lows[pivot_search:]
+        #     is_pivot_low = (pivot_search_low == min(current_window_low))
 
-            if is_pivot_low:
-                # WE FOUND A PIVOT HOLY
-            
+        #     if is_pivot_low:
+        #         # WE FOUND A PIVOT HOLY
 
-            last_low_pivot = pivot_search_low
-
-            
-
-
-
-
-
-
-
-
-        
-
-
-
-
-
-
-
-
+        #     self.last_low_pivot = pivot_search_low
 
     def on_event(self, event: Event):
         """

@@ -239,18 +239,18 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
     # 
     # Example skeleton for grid search (remove and implement your own):
     # 
-    # results: List[OptimizationResult] = []
-    # 
-    # for rsi_period in param_ranges['rsi_period']:
-    #     for long_entry in param_ranges['long_entry']:
-    #         for long_exit in param_ranges['long_exit']:
-    #             result = evaluate_parameter_combination(
-    #                 config, rsi_period, long_entry, long_exit
-    #             )
-    #             results.append(result)
-    # 
-    # results.sort(key=lambda x: x.sharpe_ratio, reverse=True)
-    # return results
+    results: List[OptimizationResult] = []
+    
+    for rsi_period in param_ranges['rsi_period']:
+        for long_entry in param_ranges['long_entry']:
+            for long_exit in param_ranges['long_exit']:
+                result = evaluate_parameter_combination(
+                    config, rsi_period, long_entry, long_exit
+                )
+                results.append(result)
+    
+    results.sort(key=lambda x: x.sharpe_ratio, reverse=True)
+    return results
     
     raise NotImplementedError(
         "You must implement optimize_parameters() with your chosen optimization method.\n"
