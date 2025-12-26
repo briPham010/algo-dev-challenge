@@ -37,9 +37,10 @@ from dataclasses import dataclass
 
 import copy
 from skopt import gp_minimize
-from skopt import BayesSearchCV
-from skopt.space import Integer, Categorical, Real
+from skopt.space import Integer, Real
 from skopt.utils import use_named_args
+import matplotlib.pyplot as plt
+import random
 
 
 # Import backtest runner components
@@ -58,6 +59,7 @@ class OptimizationResult:
     sensitivity_base: float
     pyramid_multiplier_base: float
     sharpe_ratio: float
+    calmar_ratio: float
     total_return: float
     max_drawdown: float
     total_pnl: float
@@ -65,7 +67,13 @@ class OptimizationResult:
 
 
 def run_with_params(
-    config: Dict[str, Any], rsi_period: int, long_entry: float, long_exit: float, atr_period: int, sensitivity_base: float, pyramid_multiplier_base: float
+    config: Dict[str, Any],
+    rsi_period: int,
+    long_entry: float,
+    long_exit: float,
+    atr_period: int,
+    sensitivity_base: float,
+    pyramid_multiplier_base: float,
 ) -> OptimizationResult:
     """
     Run a backtest with specific parameters.
@@ -80,6 +88,9 @@ def run_with_params(
         OptimizationResult with performance metrics
     """
 
+    # I found that when running the optimization, there were issues saving the configs from the yaml
+    # file so this is my solution to saving those configs instead of having whatever configuration
+    # the optimize_params.py was changing
     config_copy = copy.deepcopy(config)
     strategy_config = config_copy["engine"]["strategies"][0]["config"]
     engine = setup_backtest_engine(config_copy)
@@ -121,20 +132,41 @@ def run_with_params(
                 # reason, so this chunk is to solve that issue
                 raw_initial = account_df["total"].iloc[0]
                 raw_final = account_df["total"].iloc[-1]
-                
+
                 def parse_money(val):
                     if isinstance(val, str):
-                        clean_val = val.replace(',', '').split(' ')[0]
+                        clean_val = val.replace(",", "").split(" ")[0]
                         return float(clean_val)
                     return float(val)
 
                 initial_equity = parse_money(raw_initial)
                 final_equity = parse_money(raw_final)
-                
+
                 total_pnl = final_equity - initial_equity
+
+                # Total Returns wasn't calculating for whatever
+                # reason so I am calculating that manually here
+                calculated_return = total_pnl / initial_equity
+
+                # Maxdraw down also wasn't calculating (hello??!!)
+                # so I've also done that manually here
+                equity_curve = account_df["total"].apply(parse_money)
+                running_peak = equity_curve.cummax()
+                drawdown_series = (equity_curve - running_peak) / running_peak
+                calculated_max_dd = drawdown_series.min()
+
+
 
             fills_df = engine.trader.generate_fills_report()
             num_trades = len(fills_df) if not fills_df.empty else 0
+
+        # My implementation of calmar ratio
+        drawdown_penalty = abs(float(calculated_max_dd))
+        if drawdown_penalty == 0:
+            drawdown_penalty = 0.0001
+        calmar = 0.0
+        if calculated_return > 0:
+             calmar = calculated_return / drawdown_penalty
 
         return OptimizationResult(
             rsi_period=rsi_period,
@@ -144,7 +176,8 @@ def run_with_params(
             sensitivity_base=sensitivity_base,
             pyramid_multiplier_base=pyramid_multiplier_base,
             sharpe_ratio=float(sharpe) if sharpe else 0.0,
-            total_return=float(total_return) if total_return else 0.0,
+            calmar_ratio=float(calmar) if calmar else 0.0,
+            total_return=float(calculated_return),
             max_drawdown=float(max_drawdown) if max_drawdown else 0.0,
             total_pnl=float(total_pnl),
             num_trades=num_trades,
@@ -163,6 +196,7 @@ def run_with_params(
             sensitivity_base=sensitivity_base,
             pyramid_multiplier_base=pyramid_multiplier_base,
             sharpe_ratio=0.0,
+            calmar_ratio=0.0,
             total_return=0.0,
             max_drawdown=0.0,
             total_pnl=0.0,
@@ -179,17 +213,24 @@ def get_parameter_ranges() -> Dict[str, List]:
 
     TODO: Adjust these ranges based on your optimization needs and strategy requirements.
     """
-    return [Integer(10, 20, name='rsi_period'),
-        Real(30.0, 45.0, name='long_entry'),
-        Real(70.0, 85.0, name='long_exit'),
-        Integer(10, 25, name='atr_period'),
-        Real(0.2, 0.8, name = 'sensitivity_base'),
-        Real(1.2, 2.0, name = 'pyramid_multiplier_base')
+    return [
+        Integer(6, 14, name="rsi_period"),
+        Real(20.0, 45.0, name="long_entry"),
+        Real(55.0, 70.0, name="long_exit"),
+        Integer(10, 40, name="atr_period"),
+        Real(0.2, 0.8, name="sensitivity_base"),
+        Real(1.2, 2.0, name="pyramid_multiplier_base"),
     ]
 
 
 def evaluate_parameter_combination(
-    config: Dict[str, Any], rsi_period: int, long_entry: float, long_exit: float, atr_period: int, sensitivity_base: float, pyramid_multiplier_base: float
+    config: Dict[str, Any],
+    rsi_period: int,
+    long_entry: float,
+    long_exit: float,
+    atr_period: int,
+    sensitivity_base: float,
+    pyramid_multiplier_base: float,
 ) -> OptimizationResult:
     """
     Evaluate a single parameter combination by running a backtest.
@@ -205,7 +246,15 @@ def evaluate_parameter_combination(
     Returns:
         OptimizationResult with performance metrics
     """
-    return run_with_params(config, rsi_period, long_entry, long_exit, atr_period, sensitivity_base, pyramid_multiplier_base)
+    return run_with_params(
+        config,
+        rsi_period,
+        long_entry,
+        long_exit,
+        atr_period,
+        sensitivity_base,
+        pyramid_multiplier_base,
+    )
 
 
 def optimize_parameters(config_path: str) -> List[OptimizationResult]:
@@ -220,8 +269,6 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
 
     Returns:
         List of OptimizationResult sorted by your chosen metric (e.g., Sharpe ratio)
-
-    TODO: Implement your optimization method here. Some options:
 
     1. GRID SEARCH (Simple but exhaustive):
        - Test all combinations of parameters
@@ -274,42 +321,50 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
     # @used_named_args is actually kinda goated
     @use_named_args(param_ranges)
     # Backtest Function
-    def backtest(rsi_period, long_entry, long_exit, atr_period, sensitivity_base, pyramid_multiplier_base):
-        result = evaluate_parameter_combination(config, int(rsi_period),
-                                                float(long_entry),
-                                                float(long_exit),
-                                                int(atr_period),
-                                                float(sensitivity_base),
-                                                float(pyramid_multiplier_base))
-        
+    def backtest(
+        rsi_period,
+        long_entry,
+        long_exit,
+        atr_period,
+        sensitivity_base,
+        pyramid_multiplier_base,
+    ):
+        result = evaluate_parameter_combination(
+            config,
+            int(rsi_period),
+            float(long_entry),
+            float(long_exit),
+            int(atr_period),
+            float(sensitivity_base),
+            float(pyramid_multiplier_base),
+        )
+
         results.append(result)
-        score = result.sharpe_ratio
-        # Negative score is positive Sharpe here
+        score = result.calmar_ratio
+        # For whatever reasongp_minimize minimizes the 
+        # return value, so we return negative score
+
         return -score
-    
+
     # To track what iteration we are on when optimizing so I can eat
     def tracking_number(res):
         n_calls = len(res.x_iters)
-        print(f"Iteration {n_calls:<2}/50")
+        print(f"Iteration {n_calls:<2}/ 50")
 
+    # Bayesian Optimization with parameters
     res = gp_minimize(
         func=backtest,
         dimensions=param_ranges,
         n_calls=50,
         n_random_starts=10,
-        random_state=69,
-        callback=[tracking_number]
+        random_state=6767,
+        callback=[tracking_number],
     )
 
     # Sort Results
-    results.sort(key=lambda x: x.sharpe_ratio, reverse=True)
+    results.sort(key=lambda x: x.calmar_ratio, reverse=True)
 
     return results
-
-    raise NotImplementedError(
-        "You must implement optimize_parameters() with your chosen optimization method.\n"
-        "See the function docstring for guidance on different approaches."
-    )
 
 
 def objective_function(result: OptimizationResult) -> float:
@@ -333,18 +388,11 @@ def objective_function(result: OptimizationResult) -> float:
         - Combined metric: return result.sharpe_ratio * 0.7 + result.total_return * 0.3
     """
     # Default: maximize Sharpe ratio
-    # TODO: Implement your own objective function
-    # if result.num_trades < 5:
-    #     return -1.0
     
-    # if result.total_return <= 0:
-    #     return result.total_return  # Return the negative number directly
-        
-    # drawdown_penalty = abs(result.max_drawdown) + 0.0001
-    # calmar_ratio = result.total_return / drawdown_penalty
-    
-    # return calmar_ratio
-    
+    # I implemented a version of the calmar ratio towards the end of
+    # run_with_params()
+
+    return result.calmar_ratio
     return result.sharpe_ratio
 
 
@@ -353,7 +401,7 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
     Print summary of optimization results.
 
     Args:
-        results: List of optimization results (sorted by Sharpe ratio)
+        results: List of optimization results (sorted by Calmar ratio)
         top_n: Number of top results to display
     """
     print("\n" + "=" * 100)
@@ -366,7 +414,7 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
 
     # Best result
     best = results[0]
-    print(f"\n🏆 Best Parameters (by Sharpe Ratio):")
+    print(f"\n🏆 Best Parameters (by Calmar Ratio):")
     print(f"   RSI Period: {best.rsi_period}")
     print(f"   Long Entry: {best.long_entry}")
     print(f"   Long Exit: {best.long_exit}")
@@ -374,6 +422,7 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
     print(f"   Sensitivity: {best.sensitivity_base}")
     print(f"   Pyramid Multiplier: {best.pyramid_multiplier_base}")
     print(f"\n   Performance Metrics:")
+    print(f"   Calmar Ratio: {best.calmar_ratio:.2f}")
     print(f"   Sharpe Ratio: {best.sharpe_ratio:.2f}")
     print(f"   Total Return: {best.total_return:.2%}")
     print(f"   Max Drawdown: {best.max_drawdown:.2%}")
@@ -383,14 +432,14 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
     # Top N results
     print(f"\n📊 Top {min(top_n, len(results))} Configurations:")
     print(
-        f"{'Rank':<6} {'RSI':<6} {'Entry':<8} {'Exit':<8} {'ATR': <6} {'Sens':<7} {'Pyramid':<6} {'Sharpe':<10} {'Return':<12} {'PnL':<15} {'Trades':<8}"
+        f"{'Rank':<6} {'RSI':<6} {'Entry':<8} {'Exit':<8} {'ATR': <6} {'Sens':<7} {'Pyramid':<8} {'Sharpe':<10} {'Calmar':<10} {'Return':<12} {'PnL':<15} {'Trades':<8}"
     )
     print("-" * 150)
 
     for i, result in enumerate(results[:top_n], 1):
         print(
             f"{i:<6} {result.rsi_period:<6} {result.long_entry:<8.1f} {result.long_exit:<8.1f} {result.atr_period:<6} {result.sensitivity_base:<8.1f} {result.pyramid_multiplier_base:<8.1f}"
-            f"{result.sharpe_ratio:<10.2f} {result.total_return:<12.2%} "
+            f"{result.sharpe_ratio:<10.2f} {result.calmar_ratio:<10.2f} {result.total_return:<12.2%} "
             f"${result.total_pnl:<14,.2f} {result.num_trades:<8}"
         )
 
@@ -412,6 +461,14 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
             print(f"   Max Return: {max(returns):.2%}")
             print(f"   Min Return: {min(returns):.2%}")
 
+    if len(results) > 0:
+        calmars = [r.calmar_ratio for r in results if r.calmar_ratio > 0]
+        if calmars:
+            print(f"\n📈 Statistics:")
+            print(f"   Average Calmar: {sum(calmars) / len(calmars):.2f}")
+            print(f"   Max Calmar: {max(calmars):.2f}")
+
+
     print("\n" + "=" * 100)
 
     # Recommendation
@@ -421,6 +478,27 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
     print(f"   long_entry: {best.long_entry}")
     print(f"   long_exit: {best.long_exit}")
 
+
+def plot_stability_heatmap(results):
+    """
+    Plots a stability heatmap of RSI Period vs Long Entry to
+      check for 'Plateaus' as opposed to 'Spikes/Islands'.
+    """
+    x = [i.rsi_period for i in results]
+    y = [i.long_entry for i in results]
+    z = [i.total_return for i in results]
+
+    # Create grid
+    plt.figure(figsize=(10, 6))
+    plt.tricontourf(x, y, z, levels=20, cmap="RdYlGn")
+    plt.colorbar(label="Total Return")
+
+    plt.xlabel("RSI Period")
+    plt.ylabel("Long Entry Threshold")
+    plt.title("Optimization Stability Surface")
+
+    plt.scatter(x, y, c="black", s=5, alpha=0.3)
+    plt.show()
 
 def main():
     """
@@ -443,12 +521,6 @@ def main():
     print("🚀 Starting Parameter Optimization")
     print(f"📁 Configuration: {config_path}\n")
 
-    # TODO: Add any pre-optimization setup here
-    # Examples:
-    # - Set random seed for reproducibility
-    # - Load previous results to continue optimization
-    # - Set up logging to file
-
     # Run optimization
     try:
         results = optimize_parameters(str(config_path))
@@ -465,6 +537,9 @@ def main():
         # - Save results to CSV/JSON file
         # - Generate plots/visualizations
         # - Update config file with best parameters automatically
+
+        # Stability Heatmap
+        plot_stability_heatmap(results)
 
         print("\n✅ Optimization complete!")
 
