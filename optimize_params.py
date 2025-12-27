@@ -115,7 +115,6 @@ def run_with_params(
         stats_general = engine.portfolio.analyzer.get_performance_stats_general()
 
         sharpe = stats_returns.get("Sharpe Ratio (252 days)", 0.0)
-        total_return = stats_returns.get("Total Return", 0.0)
         max_drawdown = stats_general.get("Max Drawdown", 0.0)
 
         # Get account PnL
@@ -154,8 +153,6 @@ def run_with_params(
                 running_peak = equity_curve.cummax()
                 drawdown_series = (equity_curve - running_peak) / running_peak
                 calculated_max_dd = drawdown_series.min()
-
-
 
             fills_df = engine.trader.generate_fills_report()
             num_trades = len(fills_df) if not fills_df.empty else 0
@@ -203,7 +200,6 @@ def run_with_params(
             num_trades=0,
         )
 
-
 def get_parameter_ranges() -> Dict[str, List]:
     """
     Define parameter ranges for optimization.
@@ -221,7 +217,6 @@ def get_parameter_ranges() -> Dict[str, List]:
         Real(0.2, 0.8, name="sensitivity_base"),
         Real(1.2, 2.0, name="pyramid_multiplier_base"),
     ]
-
 
 def evaluate_parameter_combination(
     config: Dict[str, Any],
@@ -255,7 +250,6 @@ def evaluate_parameter_combination(
         sensitivity_base,
         pyramid_multiplier_base,
     )
-
 
 def optimize_parameters(config_path: str) -> List[OptimizationResult]:
     """
@@ -313,10 +307,8 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
 
     # Get parameter ranges
     param_ranges = get_parameter_ranges()
-
-    # TODO: IMPLEMENT YOUR OPTIMIZATION METHOD HERE
     results: List[OptimizationResult] = []
-    # Bayesian Search CV Implementation
+    # Bayesian Optimization Implementation
 
     # @used_named_args is actually kinda goated
     @use_named_args(param_ranges)
@@ -340,29 +332,30 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
         )
 
         results.append(result)
-        score = result.calmar_ratio
+        score = result.sharpe_ratio
         # For whatever reasongp_minimize minimizes the 
         # return value, so we return negative score
 
         return -score
 
-    # To track what iteration we are on when optimizing so I can eat
+    # To track what iteration we are on when
+    # optimizing so I can eat in between sessions
     def tracking_number(res):
         n_calls = len(res.x_iters)
-        print(f"Iteration {n_calls:<2}/ 50")
+        print(f"Iteration {n_calls:<2}")
 
     # Bayesian Optimization with parameters
     res = gp_minimize(
         func=backtest,
         dimensions=param_ranges,
-        n_calls=50,
+        n_calls=10,
         n_random_starts=10,
         random_state=6767,
         callback=[tracking_number],
     )
 
     # Sort Results
-    results.sort(key=lambda x: x.calmar_ratio, reverse=True)
+    results.sort(key=lambda x: x.sharpe_ratio, reverse=True)
 
     return results
 
@@ -388,13 +381,8 @@ def objective_function(result: OptimizationResult) -> float:
         - Combined metric: return result.sharpe_ratio * 0.7 + result.total_return * 0.3
     """
     # Default: maximize Sharpe ratio
-    
-    # I implemented a version of the calmar ratio towards the end of
-    # run_with_params()
 
-    return result.calmar_ratio
     return result.sharpe_ratio
-
 
 def print_optimization_summary(results: List[OptimizationResult], top_n: int = 10):
     """
@@ -414,7 +402,7 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
 
     # Best result
     best = results[0]
-    print(f"\n🏆 Best Parameters (by Calmar Ratio):")
+    print(f"\n🏆 Best Parameters (by Sharpe Ratio):")
     print(f"   RSI Period: {best.rsi_period}")
     print(f"   Long Entry: {best.long_entry}")
     print(f"   Long Exit: {best.long_exit}")
@@ -478,7 +466,7 @@ def print_optimization_summary(results: List[OptimizationResult], top_n: int = 1
     print(f"   long_entry: {best.long_entry}")
     print(f"   long_exit: {best.long_exit}")
 
-
+# Function for a stability heatmap
 def plot_stability_heatmap(results):
     """
     Plots a stability heatmap of RSI Period vs Long Entry to

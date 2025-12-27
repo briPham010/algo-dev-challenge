@@ -63,9 +63,9 @@ class RsiAlgoConfig(StrategyConfig):
     max_position: int = 6  # Maximum total position size
 
     # Configurations for Optimization
-    atr_period = 14
-    sensitivity: float = 0.8
-    pos_multiplier: float = 1.2
+    atr_period = 40
+    sensitivity: float = 0.4
+    pos_multiplier: float = 2.0
 
 
 class RsiAlgoStrategy(Strategy):
@@ -174,23 +174,32 @@ class RsiAlgoStrategy(Strategy):
         Python implementation of Pine Script's pivothigh.
         Returns value if valid, None otherwise.
         """
+
+        # Check if window size is sufficient to search
         if len(window) != self.window_size:
             return None
 
+        # Go back by x indexes
         current_index = self.lbL
-        
+      
+        # Convert double queues to lists and place pointer
         w_list = list(window)
         target = w_list[current_index]
 
+        # Search left of pointer for something
+        # smaller, otherwise return none
         left_side = w_list[:current_index]
         if left_side and max(left_side) > target:
             return None
 
+        # Search right of pointer for something
+        # smaller, otherwise return none
         right_side = w_list[current_index+1:]
         if right_side and max(right_side) >= target:
             return None
 
-        self.last_pivot_high = target
+        # If our pointer is the greatest point in the window, 
+        # then we've found a high pivot!
         return target
 
     def pivotlow(self, window):
@@ -201,21 +210,29 @@ class RsiAlgoStrategy(Strategy):
         if len(window) != self.window_size:
             return None
 
+        # Go back x indexes
         current_index = self.lbL
+
+        # Convert double queues to lists and place pointer
         w_list = list(window)
         target = w_list[current_index]
 
+        # Search left of pointer for something
+        # greater, otherwise exit the search
         left_side = w_list[:current_index]
         if left_side and min(left_side) < target:
             return None
 
+        # Search right of pointer for something
+        #  greater, otherwise ext the search
         right_side = w_list[current_index+1:]
         if right_side and min(right_side) <= target:
             return None
 
-        self.last_pivot_low = target
+        # If our pointer is the lowest point in the window, 
+        # then we've found a low pivot!
         return target
-            
+           
 
         # ====================================================================
         # Initialize Indicators - Choose ONE approach:
@@ -421,9 +438,10 @@ class RsiAlgoStrategy(Strategy):
         # Check if indicators are ready
         self.rsi_indicator.handle_bar(bar)
         if self.rsi_indicator.initialized:
+
             # For whatever reason the rsi_indicator returns the 
             # RSI between a 0 and 1.0 scale so we are multiplying it by 100
-            # to get the actualy RSI
+            # to get the actual RSI
             self.current_rsi = (self.rsi_indicator.value * 100)
 
         # Store previous value for crossover detection
@@ -475,7 +493,7 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
 
         # RSI Divergence Detection Logic
-        if len(self.low_window) >= 7:
+        if len(self.low_window) >= self.window_size:
 
             # Bullish Divergence Logic
 
@@ -668,10 +686,14 @@ class RsiAlgoStrategy(Strategy):
                         if actual_qty_to_buy > 0:
                             self.enter_long(qty=int(actual_qty_to_buy))
 
-                        # Update pyramid values
-                        self.pyramid_count += 1
-                        self.last_entry_bar_index = self.bar_index
-                        self.last_entry_rsi_level -= rsi_step_required
+                            # Update pyramid values
+                            self.pyramid_count += 1
+                            self.last_entry_bar_index = self.bar_index
+
+                            # Note: last_entry_rsi_level is not literal: it
+                            # behaves like a threshold reference that moves
+                            # downwards after each pyramid
+                            self.last_entry_rsi_level -= rsi_step_required
 
         # ====================================================================
         # === 4: Implement exit logic ===
@@ -698,11 +720,27 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
 
         # Exit logic here
-        if self.is_long and self.current_rsi > self.long_exit:
-            # Check for crossover (RSI was below threshold, now above) and bearish divergence while
-            # volume is decreasing
-            if (self.previous_rsi is not None and self.previous_rsi <= self.long_exit or 
-                (self.bearish_divergence and self.is_volume_decreasing)):
+
+        # Check for a long position
+        if self.is_long:
+
+            # Exit #1: if the current RSI value is greater than the long exit level
+            if self.current_rsi > self.long_exit:
+
+            # Check for crossover (RSI was below threshold, now above) and bearish divergence
+            # while volume is decreasing
+                if (self.previous_rsi is not None and self.previous_rsi <= self.long_exit):
+
+                    # Exit and reset values
+                    self.exit_long()
+                    self.pyramid_count = 0
+                    self.last_entry_bar_index = 0
+                    self.last_entry_rsi_level = 0.0
+
+            # Exit #2: If there is bearish divergence and volume is decreasing
+            elif self.bearish_divergence and self.is_volume_decreasing:
+
+                # Exit and reset values
                 self.exit_long()
                 self.pyramid_count = 0
                 self.last_entry_bar_index = 0
@@ -730,7 +768,6 @@ class RsiAlgoStrategy(Strategy):
         # ====================================================================
 
         # RSI divergence logic can be found after long entry logic
-
 
     def on_event(self, event: Event):
         """
