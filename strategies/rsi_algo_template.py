@@ -62,6 +62,9 @@ class RsiAlgoConfig(StrategyConfig):
     max_position: int = 6  # Maximum total position size
 
     # Configurations for Optimization
+    atr_period = 14
+    sensitivity = 0.3
+    pyramid_multiplier: float = 2
 
 
 class RsiAlgoStrategy(Strategy):
@@ -101,6 +104,8 @@ class RsiAlgoStrategy(Strategy):
         self.macd_position = 0
         self.current_atr = 0
         self.signal_current = 0
+        self.atr_period = config.atr_period
+        self.pyramid_multiplier = config.pyramid_multiplier
 
         # State variables
         self.highs: list[float] = []
@@ -120,7 +125,7 @@ class RsiAlgoStrategy(Strategy):
 
         # Indicator values (updated on each bar)
         self.rsi_indicator = RelativeStrengthIndex(period=self.rsi_period)
-        self.atr_indicator = AverageTrueRange(period=14)
+        self.atr_indicator = AverageTrueRange(period=self.atr_period)
         self.macd_indicator = MovingAverageConvergenceDivergence(
             fast_period=12, slow_period=26, price_type=PriceType.LAST
         )
@@ -134,7 +139,7 @@ class RsiAlgoStrategy(Strategy):
         self.require_macd_for_long: bool = True
 
         # Other optimization fields
-        self.sensitivity_base = 0.3  # 0.3 is default
+        self.sensitivity_base = config.sensitivity # 0.3 is default
 
         # RSI Divergence Detection Variables
         self.vol_short_indicator = ExponentialMovingAverage(period=46)
@@ -600,9 +605,10 @@ class RsiAlgoStrategy(Strategy):
             long_pyramid_step_4 = self.current_atr * sensitivity[3]
 
             # Multiplier values, adjusted for optimization
-            multipliers = [1.0, 1.0, 1.0, 2.0]
-            multiplier = 1
+            m = self.pyramid_multiplier
+            multipliers = [1.0, 1.0, m, m]
 
+            multiplier = 1
             # Calculate minimum bars, rsiSteps, and multiplier needed for pyramiding
             # based on current pyramid count
             min_bars = 0

@@ -68,7 +68,9 @@ def run_with_params(
     rsi_period: int,
     long_entry: float,
     long_exit: float,
+    atr_period: int,
     sensitivity_base: float,
+    pyramid_multiplier_base: float,
 ) -> OptimizationResult:
     """
     Run a backtest with specific parameters.
@@ -96,7 +98,9 @@ def run_with_params(
     strategy_config["long_entry"] = long_entry
     strategy_config["long_exit"] = long_exit
 
+    strategy_config["atr_period"] = atr_period
     strategy_config["sensitivity_base"] = sensitivity_base
+    strategy_config["pyramid_multiplier_base"] = pyramid_multiplier_base
 
     try:
         # Set up and run backtest
@@ -162,7 +166,9 @@ def run_with_params(
             rsi_period=rsi_period,
             long_entry=long_entry,
             long_exit=long_exit,
+            atr_period=atr_period,
             sensitivity_base=sensitivity_base,
+            pyramid_multiplier_base=pyramid_multiplier_base,
             sharpe_ratio=float(sharpe) if sharpe else 0.0,
             calmar_ratio=float(calmar) if calmar else 0.0,
             total_return=float(calculated_return),
@@ -180,7 +186,9 @@ def run_with_params(
             rsi_period=rsi_period,
             long_entry=long_entry,
             long_exit=long_exit,
+            atr_period=atr_period,
             sensitivity_base=sensitivity_base,
+            pyramid_multiplier_base=pyramid_multiplier_base,
             sharpe_ratio=0.0,
             calmar_ratio=0.0,
             total_return=0.0,
@@ -212,7 +220,9 @@ def evaluate_parameter_combination(
     rsi_period: int,
     long_entry: float,
     long_exit: float,
+    atr_period: int,
     sensitivity_base: float,
+    pyramid_multiplier_base: float,
 ) -> OptimizationResult:
     """
     Evaluate a single parameter combination by running a backtest.
@@ -233,7 +243,9 @@ def evaluate_parameter_combination(
         rsi_period,
         long_entry,
         long_exit,
+        atr_period,
         sensitivity_base,
+        pyramid_multiplier_base,
     )
 
 def optimize_parameters(config_path: str) -> List[OptimizationResult]:
@@ -303,22 +315,26 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
         rsi_period,
         long_entry,
         long_exit,
+        atr_period,
         sensitivity_base,
+        pyramid_multiplier_base,
     ):
         result = evaluate_parameter_combination(
             config,
             int(rsi_period),
             float(long_entry),
             float(long_exit),
+            int(atr_period),
             float(sensitivity_base),
+            float(pyramid_multiplier_base),
         )
 
         results.append(result)
-        score = result.num_trades
+        score = result.calmar_ratio
 
         # For whatever reasongp_minimize minimizes the
         # return value, so we return negative score
-        return score
+        return -score
 
     # To track what iteration we are on when
     # optimizing so I can eat in between sessions
@@ -337,7 +353,7 @@ def optimize_parameters(config_path: str) -> List[OptimizationResult]:
     )
 
     # Sort Results
-    results.sort(key=lambda x: x.num_trades, reverse=False)
+    results.sort(key=lambda x: x.calmar_ratio, reverse=True)
 
     return results
 

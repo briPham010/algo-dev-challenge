@@ -20,6 +20,9 @@ engine:
         rsi_period: 22      # RSI calculation period (default: 14)
         long_entry: 31        # RSI threshold for entering long positions (oversold)
         long_exit: 83       # RSI threshold for exiting long positions (overbought)
+        sensitivity: 0.3
+        atr_period: 14
+        pyramid_multiplier: 2
         
         # Position Sizing
         base_qty: 2           # Base position size in contracts
