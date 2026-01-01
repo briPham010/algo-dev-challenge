@@ -67,7 +67,7 @@ the results included headline metrics such an extremely high Sharpe and Calmar R
 *Figure 3: Backtest result using the optimal configuration denoted by the Bayesian optimizer.*
 
 
-Additionally, as an experiment, I wanted to see if the optimizer would behave differently if pyramiding was disabled (see figures 3.1-3.2). 
+Additionally, as an experiment, I wanted to see if the optimizer would behave differently if pyramiding was disabled (see figures 3.1-3.2). Surprisingly, the optimizer also attempts to push the ranges (especially RSI) towards a single value like its pyramid enabled counterpart.
 
 ![Figure 3.1](/images/pyramid_disabled.png)
 
